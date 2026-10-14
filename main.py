@@ -15,8 +15,8 @@ st.set_page_config(
 
 st.title("📊 Calculadora do Impacto Financeiro do Absenteísmo")
 st.markdown("""
-Esta aplicação consolida os registos de ausência por motivo de doença **apenas da aba 'ATESTADOS -ABONOS'** (Agosto e Setembro de 2026), 
-cruza com a base cadastral de colaboradores e calcula o valor total da perda.
+Esta aplicação consolida os registos da aba **ATESTADOS -ABONOS** (Agosto e Setembro de 2026) 
+considerando as nomenclaturas específicas de ausências, cruza com a base cadastral e calcula o **Custo Total da Perda**.
 """)
 
 # Sidebar para upload de ficheiros
@@ -49,21 +49,37 @@ def extrair_ausencias_atestados(source, mes_nome):
         col_descr = 'Descr. Historico Ocorrência' if 'Descr. Historico Ocorrência' in df_atest.columns else 'Descrição.1'
         
         for _, row in df_atest.iterrows():
-            descr = str(row.get(col_descr, ''))
-            # Filtrar licenças abonadas não médicas
-            if any(termo in descr.upper() for termo in ['PATERNIDADE', 'ÓBITO', 'OBITO', 'CASAMENTO', 'DOAÇÃO', 'SANGUE', 'JUÍZO', 'JUIZO']):
-                continue
+            descr_raw = str(row.get(col_descr, '')).strip().upper()
             
-            dias = row.get(col_dias, 1)
-            if pd.isna(dias) or dias <= 0:
-                dias = 1
-            
-            registros.append({
-                'Matrícula': str(row['Matricula']),
-                'Mes': mes_nome,
-                'Motivo': 'Atestado Médico / Doença',
-                'Dias_Ausencia': float(dias)
-            })
+            # Mapeamento e categorização de acordo com as 7 nomenclaturas solicitadas
+            motivo = None
+            if 'HORA' in descr_raw:
+                motivo = 'ATESTADO MÉDICO (HORAS)'
+            elif 'FILHO' in descr_raw or 'ACOMP' in descr_raw:
+                motivo = 'JUSTIFICATIVA DE ACOMP FILHO MENOR'
+            elif 'JUÍZO' in descr_raw or 'JUIZO' in descr_raw:
+                motivo = 'LICENÇA COMP. EM JUÍZO'
+            elif 'SANGUE' in descr_raw or 'DOAÇÃO' in descr_raw or 'DOACAO' in descr_raw:
+                motivo = 'LICENÇA DOAÇÃO DE SANGUE'
+            elif 'ÓBITO' in descr_raw or 'OBITO' in descr_raw:
+                motivo = 'LICENÇA ÓBITO'
+            elif 'PATERNIDADE' in descr_raw:
+                motivo = 'LICENÇA PATERNIDADE'
+            elif 'ATESTADO' in descr_raw or 'MÉDICO' in descr_raw or 'MEDICO' in descr_raw:
+                motivo = 'ATESTADO MÉDICO GERAL (DIAS)'
+
+            # Apenas incluir se corresponder a uma das nomenclaturas
+            if motivo is not None:
+                dias = row.get(col_dias, 1)
+                if pd.isna(dias) or dias <= 0:
+                    dias = 1
+                
+                registros.append({
+                    'Matrícula': str(row['Matricula']),
+                    'Mes': mes_nome,
+                    'Motivo': motivo,
+                    'Dias_Ausencia': float(dias)
+                })
             
     return pd.DataFrame(registros)
 
@@ -75,7 +91,7 @@ def processar_dados(s_func, s_aug, s_sep):
     df_func_clean['Matrícula'] = df_func_clean['Matrícula'].astype(str)
     df_func_clean['Custo_Diario'] = df_func_clean['Salario_Mensal'] / 22
 
-    # 2. Ausências (Somente ATESTADOS -ABONOS)
+    # 2. Ausências
     df_aug = extrair_ausencias_atestados(s_aug, 'Agosto/2026')
     df_sep = extrair_ausencias_atestados(s_sep, 'Setembro/2026')
     
@@ -116,7 +132,7 @@ def processar_dados(s_func, s_aug, s_sep):
         ("Total Dias Perdidos (Bimestre)", total_dias, "#,##0"),
         ("Dias Perdidos em Agosto/2026", dias_aug, "#,##0"),
         ("Dias Perdidos em Setembro/2026", dias_sep, "#,##0"),
-        ("Impacto Financeiro Total Acumulado", total_custo, "R$ #,##0.00")
+        ("Impacto Financeiro Total (Custo_Total_Perda)", total_custo, "R$ #,##0.00")
     ]
 
     r_idx = 4
@@ -127,12 +143,12 @@ def processar_dados(s_func, s_aug, s_sep):
         cv.number_format = fmt
         r_idx += 1
 
-    ws_dash.cell(row=10, column=2, value="Top Departamentos com Maior Custo").font = Font(size=12, bold=True, color="1F4E78")
+    ws_dash.cell(row=10, column=2, value="Top Departamentos com Maior Custo de Absenteísmo").font = Font(size=12, bold=True, color="1F4E78")
     top_depto = df_calculo.groupby('Departamento')['Custo_Total_Perda'].sum().reset_index().sort_values(by='Custo_Total_Perda', ascending=False)
     
     ws_dash.cell(row=11, column=2, value="Departamento").fill = header_fill
     ws_dash.cell(row=11, column=2).font = header_font
-    ws_dash.cell(row=11, column=3, value="Custo Total (R$)").fill = header_fill
+    ws_dash.cell(row=11, column=3, value="Custo Total Perda (R$)").fill = header_fill
     ws_dash.cell(row=11, column=3).font = header_font
 
     r = 12
@@ -143,7 +159,7 @@ def processar_dados(s_func, s_aug, s_sep):
         r += 1
 
     ws_dash.column_dimensions['B'].width = 42
-    ws_dash.column_dimensions['C'].width = 22
+    ws_dash.column_dimensions['C'].width = 25
     ws_dash.column_dimensions['D'].width = 22
 
     def criar_aba_df(title, df, fmt_moeda_cols=[], fmt_int_cols=[]):
@@ -173,11 +189,11 @@ def processar_dados(s_func, s_aug, s_sep):
             col_letter = get_column_letter(col[0].column)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # Abas adicionais
+    # Abas da Planilha Final
     criar_aba_df('Dados_Funcionarios', df_func_clean, fmt_moeda_cols=['Salario_Mensal', 'Custo_Diario'])
     criar_aba_df('Consolidado_Absenteismo', df_consolidado, fmt_int_cols=['Dias_Ausencia'])
     
-    df_calc_out = df_calculo[['Matrícula', 'Nome', 'Departamento', 'Cargo', 'Mes', 'Dias_Ausencia', 'Custo_Diario', 'Custo_Total_Perda']]
+    df_calc_out = df_calculo[['Matrícula', 'Nome', 'Departamento', 'Cargo', 'Mes', 'Motivo', 'Dias_Ausencia', 'Custo_Diario', 'Custo_Total_Perda']]
     criar_aba_df('Calculo_Custo_Perda', df_calc_out, 
                  fmt_moeda_cols=['Custo_Diario', 'Custo_Total_Perda'],
                  fmt_int_cols=['Dias_Ausencia'])
@@ -203,6 +219,10 @@ if source_func and source_aug and source_sep:
             c3.metric("Setembro/2026", f"{int(df_calculo[df_calculo['Mes']=='Setembro/2026']['Dias_Ausencia'].sum())} dias")
             c4.metric("Custo Total da Perda", f"R$ {df_calculo['Custo_Total_Perda'].sum():,.2f}")
             
+            st.markdown("---")
+            st.subheader("📊 Distribuição por Motivo de Ausência")
+            st.dataframe(df_calculo.groupby('Motivo')[['Dias_Ausencia', 'Custo_Total_Perda']].sum().style.format({'Custo_Total_Perda': 'R$ {:,.2f}', 'Dias_Ausencia': '{:.0f}'}))
+
             st.markdown("---")
             st.subheader("🏢 Top 5 Departamentos mais Afetados")
             top5_deptos = df_calculo.groupby('Departamento')[['Dias_Ausencia', 'Custo_Total_Perda']].sum().sort_values(by='Custo_Total_Perda', ascending=False).head(5)
