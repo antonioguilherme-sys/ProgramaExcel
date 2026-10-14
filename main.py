@@ -16,7 +16,7 @@ st.set_page_config(
 st.title("📊 Calculadora do Impacto Financeiro do Absenteísmo")
 st.markdown("""
 Esta aplicação consolida os registos de ausência por motivo de doença (Agosto e Setembro de 2026), 
-cruza com a base cadastral de colaboradores e calcula os custos diretos e de cobertura/substituição.
+cruza com a base cadastral de colaboradores e calcula o impacto financeiro direto.
 """)
 
 # Sidebar para upload de ficheiros
@@ -97,17 +97,15 @@ def processar_dados(s_func, s_aug, s_sep):
     df_consolidado = pd.concat([df_aug, df_sep], ignore_index=True)
     df_consolidado = df_consolidado.groupby(['Matrícula', 'Mes', 'Motivo'], as_index=False)['Dias_Ausencia'].sum()
 
-    # 3. Cálculos
+    # 3. Cálculos (Apenas Custo Direto)
     df_calculo = pd.merge(df_consolidado, df_func_clean, on='Matrícula', how='inner')
     df_calculo['Custo_Direto'] = df_calculo['Dias_Ausencia'] * df_calculo['Custo_Diario']
-    df_calculo['Custo_Cobertura'] = df_calculo['Custo_Direto'] * 0.50 # Cobertura/Hora Extra (50%)
-    df_calculo['Custo_Total_Perda'] = df_calculo['Custo_Direto'] + df_calculo['Custo_Cobertura']
+    df_calculo['Custo_Total_Perda'] = df_calculo['Custo_Direto']
 
     # 4. Gerar Excel na memória (BytesIO)
     output = BytesIO()
     wb = openpyxl.Workbook()
     
-    # Remover aba padrão
     wb.remove(wb.active)
 
     # Estilos
@@ -130,7 +128,6 @@ def processar_dados(s_func, s_aug, s_sep):
     dias_aug = df_calculo[df_calculo['Mes'] == 'Agosto/2026']['Dias_Ausencia'].sum()
     dias_sep = df_calculo[df_calculo['Mes'] == 'Setembro/2026']['Dias_Ausencia'].sum()
 
-    # Lista de KPIs corrigida sem erros de sintaxe
     kpis = [
         ("Total Dias Perdidos (Bimestre)", total_dias, "#,##0"),
         ("Dias Perdidos em Agosto/2026", dias_aug, "#,##0"),
@@ -165,7 +162,6 @@ def processar_dados(s_func, s_aug, s_sep):
     ws_dash.column_dimensions['C'].width = 22
     ws_dash.column_dimensions['D'].width = 22
 
-    # Função auxiliar para gravar DataFrames
     def criar_aba_df(title, df, fmt_moeda_cols=[], fmt_int_cols=[]):
         ws = wb.create_sheet(title=title)
         ws.views.sheetView[0].showGridLines = True
@@ -197,9 +193,9 @@ def processar_dados(s_func, s_aug, s_sep):
     criar_aba_df('Dados_Funcionarios', df_func_clean, fmt_moeda_cols=['Salario_Mensal', 'Custo_Diario'])
     criar_aba_df('Consolidado_Absenteismo', df_consolidado, fmt_int_cols=['Dias_Ausencia'])
     
-    df_calc_out = df_calculo[['Matrícula', 'Nome', 'Departamento', 'Cargo', 'Mes', 'Dias_Ausencia', 'Custo_Diario', 'Custo_Direto', 'Custo_Cobertura', 'Custo_Total_Perda']]
+    df_calc_out = df_calculo[['Matrícula', 'Nome', 'Departamento', 'Cargo', 'Mes', 'Dias_Ausencia', 'Custo_Diario', 'Custo_Direto', 'Custo_Total_Perda']]
     criar_aba_df('Calculo_Custo_Perda', df_calc_out, 
-                 fmt_moeda_cols=['Custo_Diario', 'Custo_Direto', 'Custo_Cobertura', 'Custo_Total_Perda'],
+                 fmt_moeda_cols=['Custo_Diario', 'Custo_Direto', 'Custo_Total_Perda'],
                  fmt_int_cols=['Dias_Ausencia'])
 
     wb.save(output)
@@ -221,7 +217,7 @@ if source_func and source_aug and source_sep:
             c1.metric("Dias Perdidos (Total)", f"{int(df_calculo['Dias_Ausencia'].sum())} dias")
             c2.metric("Agosto/2026", f"{int(df_calculo[df_calculo['Mes']=='Agosto/2026']['Dias_Ausencia'].sum())} dias")
             c3.metric("Setembro/2026", f"{int(df_calculo[df_calculo['Mes']=='Setembro/2026']['Dias_Ausencia'].sum())} dias")
-            c4.metric("Custo Total Estimado", f"R$ {df_calculo['Custo_Total_Perda'].sum():,.2f}")
+            c4.metric("Custo Total Direto", f"R$ {df_calculo['Custo_Total_Perda'].sum():,.2f}")
             
             st.markdown("---")
             st.subheader("🏢 Top 5 Departamentos mais Afetados")
