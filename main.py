@@ -15,8 +15,8 @@ st.set_page_config(
 
 st.title("📊 Calculadora do Impacto Financeiro do Absenteísmo")
 st.markdown("""
-Esta aplicação consolida os registos da aba **ATESTADOS -ABONOS** (Agosto e Setembro de 2026) 
-considerando as nomenclaturas específicas de ausências, cruza com a base cadastral e calcula o **Custo Total da Perda**.
+Esta aplicação consolida os registos da aba **ATESTADOS -ABONOS** (Agosto e Setembro de 2026), 
+mantendo a totalidade dos dias de ausência declarados.
 """)
 
 # Sidebar para upload de ficheiros
@@ -42,7 +42,6 @@ def extrair_ausencias_atestados(source, mes_nome):
     xls = pd.ExcelFile(source)
     registros = []
     
-    # Processar EXCLUSIVAMENTE a Aba "ATESTADOS -ABONOS"
     if 'ATESTADOS -ABONOS' in xls.sheet_names:
         df_atest = pd.read_excel(xls, sheet_name='ATESTADOS -ABONOS')
         col_dias = 'Dias Abs' if 'Dias Abs' in df_atest.columns else 'Dias Afastamento'
@@ -51,8 +50,8 @@ def extrair_ausencias_atestados(source, mes_nome):
         for _, row in df_atest.iterrows():
             descr_raw = str(row.get(col_descr, '')).strip().upper()
             
-            # Mapeamento e categorização de acordo com as 7 nomenclaturas solicitadas
-            motivo = None
+            # Categorização conforme as nomenclaturas solicitadas
+            motivo = "ATESTADO MÉDICO GERAL (DIAS)"
             if 'HORA' in descr_raw:
                 motivo = 'ATESTADO MÉDICO (HORAS)'
             elif 'FILHO' in descr_raw or 'ACOMP' in descr_raw:
@@ -65,21 +64,20 @@ def extrair_ausencias_atestados(source, mes_nome):
                 motivo = 'LICENÇA ÓBITO'
             elif 'PATERNIDADE' in descr_raw:
                 motivo = 'LICENÇA PATERNIDADE'
-            elif 'ATESTADO' in descr_raw or 'MÉDICO' in descr_raw or 'MEDICO' in descr_raw:
-                motivo = 'ATESTADO MÉDICO GERAL (DIAS)'
-
-            # Apenas incluir se corresponder a uma das nomenclaturas
-            if motivo is not None:
-                dias = row.get(col_dias, 1)
-                if pd.isna(dias) or dias <= 0:
-                    dias = 1
-                
-                registros.append({
-                    'Matrícula': str(row['Matricula']),
-                    'Mes': mes_nome,
-                    'Motivo': motivo,
-                    'Dias_Ausencia': float(dias)
-                })
+            
+            dias = row.get(col_dias, 1)
+            if pd.isna(dias) or dias <= 0:
+                dias = 1
+            
+            nome_func = row.get('Funcionario', 'NÃO CADASTRADO')
+            
+            registros.append({
+                'Matrícula': str(row['Matricula']),
+                'Nome_Planilha': str(nome_func),
+                'Mes': mes_nome,
+                'Motivo': motivo,
+                'Dias_Ausencia': float(dias)
+            })
             
     return pd.DataFrame(registros)
 
@@ -89,26 +87,33 @@ def processar_dados(s_func, s_aug, s_sep):
     df_func_clean = df_func[['Matrícula', 'Nome', 'Descrição (Cargos)', 'Descrição (Departamentos)', 'Salário Base']].copy()
     df_func_clean.columns = ['Matrícula', 'Nome', 'Cargo', 'Departamento', 'Salario_Mensal']
     df_func_clean['Matrícula'] = df_func_clean['Matrícula'].astype(str)
-    df_func_clean['Custo_Diario'] = df_func_clean['Salario_Mensal'] / 22
+    
+    salario_medio = df_func_clean['Salario_Mensal'].mean()
 
-    # 2. Ausências
+    # 2. Ausências (Somente ATESTADOS -ABONOS)
     df_aug = extrair_ausencias_atestados(s_aug, 'Agosto/2026')
     df_sep = extrair_ausencias_atestados(s_sep, 'Setembro/2026')
     
     df_consolidado = pd.concat([df_aug, df_sep], ignore_index=True)
-    df_consolidado = df_consolidado.groupby(['Matrícula', 'Mes', 'Motivo'], as_index=False)['Dias_Ausencia'].sum()
+    df_consolidado = df_consolidado.groupby(['Matrícula', 'Nome_Planilha', 'Mes', 'Motivo'], as_index=False)['Dias_Ausencia'].sum()
 
-    # 3. Cálculo do Custo Total da Perda
-    df_calculo = pd.merge(df_consolidado, df_func_clean, on='Matrícula', how='inner')
+    # 3. Cruzamento LEFT JOIN (sem perder dias de funcionários não cadastrados/desligados)
+    df_calculo = pd.merge(df_consolidado, df_func_clean, on='Matrícula', how='left')
+    
+    # Preenchimento de dados para ausentes do cadastro
+    df_calculo['Nome'] = df_calculo['Nome'].fillna(df_calculo['Nome_Planilha'])
+    df_calculo['Departamento'] = df_calculo['Departamento'].fillna('NÃO CADASTRADO / OUTROS')
+    df_calculo['Cargo'] = df_calculo['Cargo'].fillna('NÃO CADASTRADO')
+    df_calculo['Salario_Mensal'] = df_calculo['Salario_Mensal'].fillna(salario_medio)
+    
+    df_calculo['Custo_Diario'] = df_calculo['Salario_Mensal'] / 22
     df_calculo['Custo_Total_Perda'] = df_calculo['Dias_Ausencia'] * df_calculo['Custo_Diario']
 
-    # 4. Gerar Excel na memória (BytesIO)
+    # 4. Gerar Excel na memória
     output = BytesIO()
     wb = openpyxl.Workbook()
-    
     wb.remove(wb.active)
 
-    # Estilos
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     thin_border = Border(left=Side(style='thin', color='D9D9D9'),
@@ -116,7 +121,7 @@ def processar_dados(s_func, s_aug, s_sep):
                          top=Side(style='thin', color='D9D9D9'),
                          bottom=Side(style='thin', color='D9D9D9'))
 
-    # Aba 1: Dashboard_Resumo
+    # Aba Dashboard_Resumo
     ws_dash = wb.create_sheet(title="Dashboard_Resumo")
     ws_dash.views.sheetView[0].showGridLines = True
     
@@ -143,7 +148,7 @@ def processar_dados(s_func, s_aug, s_sep):
         cv.number_format = fmt
         r_idx += 1
 
-    ws_dash.cell(row=10, column=2, value="Top Departamentos com Maior Custo de Absenteísmo").font = Font(size=12, bold=True, color="1F4E78")
+    ws_dash.cell(row=10, column=2, value="Top Departamentos com Maior Custo").font = Font(size=12, bold=True, color="1F4E78")
     top_depto = df_calculo.groupby('Departamento')['Custo_Total_Perda'].sum().reset_index().sort_values(by='Custo_Total_Perda', ascending=False)
     
     ws_dash.cell(row=11, column=2, value="Departamento").fill = header_fill
@@ -189,9 +194,9 @@ def processar_dados(s_func, s_aug, s_sep):
             col_letter = get_column_letter(col[0].column)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # Abas da Planilha Final
+    df_func_clean['Custo_Diario'] = df_func_clean['Salario_Mensal'] / 22
     criar_aba_df('Dados_Funcionarios', df_func_clean, fmt_moeda_cols=['Salario_Mensal', 'Custo_Diario'])
-    criar_aba_df('Consolidado_Absenteismo', df_consolidado, fmt_int_cols=['Dias_Ausencia'])
+    criar_aba_df('Consolidado_Absenteismo', df_consolidado[['Matrícula', 'Nome_Planilha', 'Mes', 'Motivo', 'Dias_Ausencia']], fmt_int_cols=['Dias_Ausencia'])
     
     df_calc_out = df_calculo[['Matrícula', 'Nome', 'Departamento', 'Cargo', 'Mes', 'Motivo', 'Dias_Ausencia', 'Custo_Diario', 'Custo_Total_Perda']]
     criar_aba_df('Calculo_Custo_Perda', df_calc_out, 
@@ -202,7 +207,6 @@ def processar_dados(s_func, s_aug, s_sep):
     output.seek(0)
     return df_calculo, output
 
-# Verificação dos ficheiros para execução
 if source_func and source_aug and source_sep:
     st.success("✅ Todos os 3 ficheiros de entrada foram identificados com sucesso!")
     
@@ -236,4 +240,3 @@ if source_func and source_aug and source_sep:
             )
 else:
     st.warning("⚠️ Aguardando o upload dos 3 ficheiros para prosseguir.")
-    st.info("Utilize a barra lateral à esquerda para carregar os ficheiros caso não estejam na pasta do projeto.")
