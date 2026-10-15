@@ -106,7 +106,7 @@ def processar_dados(s_func, s_aug, s_sep):
     df_calculo['Cargo'] = df_calculo['Cargo'].fillna('NÃO CADASTRADO')
     df_calculo['Salario_Mensal'] = df_calculo['Salario_Mensal'].fillna(salario_medio)
     
-    df_calculo['Custo_Diario'] = df_calculo['Salario_Mensal'] / 22
+    df_calculo['Custo_Diario'] = df_calculo['Salario_Mensal'] / 30
     df_calculo['Custo_Total_Perda'] = df_calculo['Dias_Ausencia'] * df_calculo['Custo_Diario']
 
     # 4. Gerar Excel na memória
